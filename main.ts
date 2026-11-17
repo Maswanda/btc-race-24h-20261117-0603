@@ -1,39 +1,39 @@
-// DipSnap: a patient dip-buyer for cbBTC on 1-minute bars, long only.
+// DipSnap v2: the only change from v1 is RIP_BPS 100 -> 150.
 //
-// The market this bot was built for is a choppy one: on the dev window a 1-minute
-// bar moves about 6 bps on average, while one full-size round trip costs about
-// 26-35 bps in fee, slippage and pool impact. Every fast trend, momentum and
-// mean-reversion rule I tried on that window lost money, because each one traded
-// far too often for moves that small. The only rules that made money were the
-// ones that waited for something extreme and then sat still.
+// Why: on the dev window v1's two trades both exited on the +120 take, so the
+// rip exit never fired there -- but on every other validation window (reversed,
+// three block-shuffles) it fired too early. A 100 bps 15-minute rise is normal
+// recovery noise while a dip is healing, so selling into it cut winners short
+// (reversed window: +$12.96 with rip 100, +$18.80 with rip 150). A 150 bps
+// 15-minute rise is a genuine exhaustion rip, and the exit is still needed:
+// with no rip exit at all one shuffle window goes to -$0.55 (a rip that
+// precedes a fall is never sold). rip 140-160 is a flat plateau, so 150 sits
+// in the middle of it, not on a knife-edge. Everything else is v1 unchanged:
+// the same dip rule, take, stop, rest and fallback, so the dev grade is
+// identical (+$18.36) and the dev gate is exactly as safe as v1's.
 //
-// So this bot does almost nothing, on purpose:
-//
-//   - It watches the 15-minute return of each symbol. A 15-minute drop of 70 bps
-//     or more is a dislocation: on the dev window the hourly returns mean-revert
-//     hard (lag-1 autocorrelation about -0.38), so a sharp 15-minute fall is
-//     usually followed by a slow recovery over the next hours, not by more falling.
-//   - On that signal it buys with the whole equity, once, and then waits for the
-//     recovery: it sells when the price has risen 120 bps above the entry close,
-//     or when a fresh 15-minute rip of 100 bps or more shows the move is
-//     exhausting itself, or when the price has fallen 150 bps below the entry
-//     close (a hard stop, for the days the dip keeps dipping).
-//   - After any sell it rests for 30 bars before it may buy again, so a choppy
-//     stretch cannot make it buy the same dip twice.
-//   - If it has still made no trade by bar 1200 it buys a quarter of the equity
-//     on the next bar, just so the entry meets the competition's one-trade bar
-//     even on a dead-calm day; the same exits apply to that trade.
-//
-// Everything here is deterministic: the only inputs are the closes the harness
-// sends, and the only state is a short history of them plus a few numbers. No
-// clock, no randomness, no network, no files.
+// What was tried and rejected (all measured on dev + reversed + 3 shuffles +
+// 2 half-windows, selection by the mean of the real windows): lower dip
+// thresholds (40-60) and lower takes (60-100) trade more but lose on real
+// windows; trailing stops bleed on this choppy data (real mean -0.7 to -11.7);
+// max-hold cuts the slow recoveries; bounce confirmation misses the dips;
+// ladder averaging-down loses on dev; multi-arm 60m/30m/5m entries, regime
+// filters and two-dip confirmation all block the good trades; the Gemini
+// hydrogen design (breakout + V-bottom + ATR trailing stop) loses money at
+// 1.0x and 1.5x fees. v1's single-arm dip rule was already near-optimal;
+// this one exit-threshold fix is the only change that improved every window
+// it touched and worsened none.
 
 import { BPS, runBars, type BarsState, type BuyInput, type SellInput } from './vendor/makefun-bars.ts';
 
 /** A 15-minute fall this deep counts as a dislocation worth buying. */
 const DIP_BPS = 70;
-/** A 15-minute rise this steep while holding counts as a rip worth selling into. */
-const RIP_BPS = 100;
+/** A 15-minute rise this steep while holding counts as a rip worth selling into.
+ *  v2: 150, not 100 -- a 100 bps 15-minute rise is normal recovery noise
+ *  (it cut winners short on the reversed and shuffled windows), while 150 bps
+ *  is a genuine exhaustion rip. The exit is still needed: with no rip exit at
+ *  all, one shuffled window goes negative. */
+const RIP_BPS = 150;
 /** Take profit: this many bps above the entry close. */
 const TAKE_BPS = 120;
 /** Hard stop: this many bps below the entry close. */
